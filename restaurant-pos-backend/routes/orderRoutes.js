@@ -1104,6 +1104,77 @@ router.patch('/:id/assign-driver', authenticateToken, async (req, res) => {
   }
 });
 
+// Unassign driver from order (return to queue)
+router.patch('/:id/unassign-driver', authenticateToken, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+
+    const orderCheck = await client.query(
+      'SELECT id, driver_id, status FROM orders WHERE id = $1',
+      [id]
+    );
+
+    if (orderCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Order not found' });
+    }
+
+    const driverId = orderCheck.rows[0].driver_id;
+
+    if (!driverId) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Order has no assigned driver' });
+    }
+
+    // Remove driver from order, set status back to Pending
+    await client.query(
+      `UPDATE orders SET driver_id = NULL, status = 'Pending' WHERE id = $1`,
+      [id]
+    );
+
+    // Clear order from driver_locations
+    await client.query(
+      `UPDATE driver_locations 
+       SET order_id = NULL, dest_lat = NULL, dest_lng = NULL
+       WHERE driver_id = $1 AND order_id = $2`,
+      [driverId, id]
+    );
+
+    // Check if driver has other active orders
+    const activeOrdersCheck = await client.query(
+      `SELECT COUNT(*) as count FROM orders 
+       WHERE driver_id = $1 
+       AND status IN ('Confirmed', 'Preparing', 'Delivering')`,
+      [driverId]
+    );
+    const remainingOrders = parseInt(activeOrdersCheck.rows[0].count);
+
+    if (remainingOrders === 0) {
+      await client.query(
+        `UPDATE drivers SET status = 'available' WHERE id = $1`,
+        [driverId]
+      );
+      await client.query(
+        `UPDATE driver_locations SET status = 'متاح' WHERE driver_id = $1`,
+        [driverId]
+      );
+    }
+
+    await client.query('COMMIT');
+    console.log(`✅ Order ${id} unassigned from driver ${driverId}`);
+
+    res.json({ success: true, message: 'Driver unassigned successfully' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Unassign driver error:', error);
+    res.status(500).json({ error: 'Failed to unassign driver' });
+  } finally {
+    client.release();
+  }
+});
+
 // Update order
 router.patch('/:id', authenticateToken, async (req, res) => {
   const client = await pool.connect();

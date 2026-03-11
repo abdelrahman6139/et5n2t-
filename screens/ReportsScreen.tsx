@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { reports as reportsApi, businessDays as businessDaysApi } from '../utils/api';
-import { printStyledReport, exportToCSV } from '../utils/printReports';
+import { printStyledReport, exportToCSV } from '../utils/printService';
 
 
 type ReportType = 'summary' | 'items' | 'hourly' | 'drivers' | 'daily';

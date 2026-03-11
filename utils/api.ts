@@ -158,16 +158,6 @@ export const customers = {
 
 
 // Drivers
-export const drivers1 = {
-  getAll: () =>
-    api.get('/drivers'),
-  getAvailable: () =>
-    api.get('/drivers/available'),
-  updateLocation: (id: number, latitude: number, longitude: number) =>
-    api.put(`/drivers/${id}/location`, { latitude, longitude }),
-  updateStatus: (id: number, status: string) =>
-    api.patch(`/drivers/${id}/status`, { status }),
-};
 export const drivers = {
   getAll: () => api.get('/drivers'),
   getOne: (id: number) => api.get(`/drivers/${id}`),
@@ -229,13 +219,13 @@ export const statistics = {
 // Statistics
 export const stats = {
   getToday: () =>
-    api.get('/stats/today'),
+    api.get('/statistics/today'),
   getRange: (startDate: string, endDate: string) =>
-    api.get('/stats/range', { params: { startDate, endDate } }),
+    api.get('/statistics/range', { params: { startDate, endDate } }),
   getTopItems: (params?: { limit?: number; startDate?: string; endDate?: string }) =>
-    api.get('/stats/top-items', { params }),
+    api.get('/statistics/top-items', { params }),
   getHourly: () =>
-    api.get('/stats/hourly'),
+    api.get('/statistics/hourly'),
 };
 
 // Add these exports with your other API modules (after expenses, statistics, etc.)

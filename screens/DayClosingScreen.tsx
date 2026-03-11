@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { businessDays as businessDaysApi } from '../utils/api';
+import { openAndPrint } from '../utils/printService';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -108,10 +109,8 @@ const StatCard: React.FC<{
 // ─────────────────────────────────────────────────────────────────────────────
 // Print closing day report
 // ─────────────────────────────────────────────────────────────────────────────
-const printDayReport = (summary: DaySummary) => {
+const printDayReport = async (summary: DaySummary) => {
     const { day, orders, byCenter, byPayment, topItems, expenses, shifts, netProfit } = summary;
-    const win = window.open('', '_blank');
-    if (!win) return;
 
     const fmt = (n: any) => Number(n ?? 0).toFixed(2);
     const fDate = (d: string | null) =>
@@ -120,119 +119,44 @@ const printDayReport = (summary: DaySummary) => {
         hour: '2-digit', minute: '2-digit', hour12: false,
       }).format(new Date(d)) : '-';
 
-    win.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar"><head>
-    <meta charset="UTF-8">
-    <title>إغلاق يومي - يوم ${day.id}</title>
-    <style>
-      @page { size: 80mm auto; margin: 2mm; }
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
-        font-family: 'Arial Unicode MS', 'Segoe UI', Tahoma, Arial, sans-serif;
-        font-size: 13px;
-        font-weight: 700;
-        direction: rtl;
-        background: #fff;
-        color: #000;
-        width: 80mm;
-      }
-      .wrap { width: 76mm; margin: 0 auto; padding: 4px 2px; }
-      .title { font-size: 17px; font-weight: 900; text-align: center; margin-bottom: 2px; }
-      .subtitle { font-size: 13px; text-align: center; }
-      .sep { border: none; border-top: 1px dashed #000; margin: 5px 0; }
-      .section-label {
-        font-size: 13px;
-        font-weight: 900;
-        background: #DCDCDC;
-        border: 0.75px solid #000;
-        padding: 3px 5px;
-        margin: 4px 0 2px 0;
-        text-align: center;
-      }
-      .row {
-        display: flex;
-        justify-content: space-between;
-        padding: 2px 0;
-        font-size: 13px;
-        border-bottom: 1px dotted #ccc;
-      }
-      .row:last-child { border-bottom: none; }
-      .itbl {
-        width: 100%;
-        border-collapse: collapse;
-        table-layout: fixed;
-        font-size: 12px;
-        margin: 2px 0;
-      }
-      .itbl th, .itbl td { border: 0.75px solid #000; padding: 2px 4px; word-break: break-word; }
-      .itbl th { text-align: center; font-weight: 900; background: #DCDCDC; }
-      .itbl td:first-child { text-align: right; }
-      .itbl td:not(:first-child) { text-align: center; }
-      .grand-box {
-        border: 1px solid #000;
-        padding: 5px;
-        margin-top: 5px;
-        font-size: 15px;
-        font-weight: 900;
-      }
-      .grand-box .gr { display: flex; justify-content: space-between; }
-      .footer { text-align: center; font-size: 12px; margin-top: 6px; }
-      @media print { body { width: 80mm; } }
-    </style>
-  </head><body><div class="wrap">
-    <div class="title">تقرير الإغلاق اليومي</div>
-    <div class="subtitle">يوم رقم: ${day.id}</div>
-    <hr class="sep" />
+        const lines: string[] = [];
+        lines.push('[تقرير الإغلاق اليومي]');
+        lines.push(`يوم رقم: ${day.id}`);
+        lines.push('------------------------------------------');
+        lines.push(`فتح بواسطة: ${day.opened_by_name}`);
+        lines.push(`وقت الفتح: ${fDate(day.opened_at)}`);
+        if (day.closed_at) lines.push(`الإغلاق: ${fDate(day.closed_at)}`);
+        lines.push('------------------------------------------');
 
-    <div class="row"><span>فتح بواسطة</span><span>${day.opened_by_name}</span></div>
-    <div class="row"><span>وقت الفتح</span><span>${fDate(day.opened_at)}</span></div>
-    ${day.closed_at ? `<div class="row"><span>الإغلاق</span><span>${fDate(day.closed_at)}</span></div>` : ''}
-    <hr class="sep" />
+        lines.push('[إجمالي المبيعات]');
+        lines.push(`عدد الطلبات\t${orders.total_orders}`);
+        lines.push(`إجمالي المبيعات\t${fmt(orders.total_sales)}`);
+        lines.push(`نقدي\t${fmt(orders.total_cash)}`);
+        lines.push(`بطاقة\t${fmt(orders.total_card)}`);
+        lines.push(`رسوم توصيل\t${fmt(orders.total_delivery_fees)}`);
+        lines.push(`خصم\t${fmt(orders.total_discount)}`);
+        lines.push(`ضريبة\t${fmt(orders.total_tax)}`);
+        lines.push(`رسوم خدمة\t${fmt(orders.total_service)}`);
+        lines.push('------------------------------------------');
 
-    <div class="section-label">إجمالي المبيعات</div>
-    <div class="row"><span>عدد الطلبات</span><span>${orders.total_orders}</span></div>
-    <div class="row"><span>إجمالي المبيعات</span><span>${fmt(orders.total_sales)}</span></div>
-    <div class="row"><span>نقدي</span><span>${fmt(orders.total_cash)}</span></div>
-    <div class="row"><span>بطاقة</span><span>${fmt(orders.total_card)}</span></div>
-    <div class="row"><span>رسوم توصيل</span><span>${fmt(orders.total_delivery_fees)}</span></div>
-    <div class="row"><span>خصم</span><span>${fmt(orders.total_discount)}</span></div>
-    <div class="row"><span>ضريبة</span><span>${fmt(orders.total_tax)}</span></div>
-    <div class="row"><span>رسوم خدمة</span><span>${fmt(orders.total_service)}</span></div>
-    <hr class="sep" />
+        lines.push('[مبيعات حسب القناة]');
+        lines.push('القناة\tطلبات\tإجمالي');
+        byCenter.forEach(c => lines.push(`${centerLabel[c.sales_center] ?? c.sales_center}\t${c.count}\t${fmt(c.total)}`));
+        lines.push('------------------------------------------');
 
-    <div class="section-label">مبيعات حسب القناة</div>
-    <table class="itbl">
-      <tr><th>القناة</th><th>طلبات</th><th>إجمالي</th></tr>
-      ${byCenter.map(c => `<tr><td>${centerLabel[c.sales_center] ?? c.sales_center}</td><td>${c.count}</td><td>${fmt(c.total)}</td></tr>`).join('')}
-    </table>
-    <hr class="sep" />
+        lines.push('[مبيعات حسب الدفع]');
+        lines.push('الطريقة\tطلبات\tإجمالي');
+        byPayment.forEach(p => lines.push(`${payLabel[p.payment_method] ?? p.payment_method}\t${p.count}\t${fmt(p.total)}`));
+        lines.push('------------------------------------------');
 
-    <div class="section-label">مبيعات حسب الدفع</div>
-    <table class="itbl">
-      <tr><th>الطريقة</th><th>طلبات</th><th>إجمالي</th></tr>
-      ${byPayment.map(p => `<tr><td>${payLabel[p.payment_method] ?? p.payment_method}</td><td>${p.count}</td><td>${fmt(p.total)}</td></tr>`).join('')}
-    </table>
-    <hr class="sep" />
+        lines.push('[المصروفات]');
+        lines.push(`إجمالي المصروفات\t${fmt(expenses.total_expenses)}`);
+        lines.push(`صافي الربح\t${fmt(netProfit)}`);
+        lines.push('------------------------------------------');
+        lines.push(`طُبع: ${new Date().toLocaleDateString('ar-EG')}`);
 
-    <div class="section-label">أكثر الأصناف مبيعاً</div>
-    <table class="itbl">
-      <tr><th>الصنف</th><th>كمية</th><th>إجمالي</th></tr>
-      ${topItems.slice(0, 8).map(i => `<tr><td>${i.item_name}</td><td>${i.total_qty}</td><td>${fmt(i.total_sales)}</td></tr>`).join('')}
-    </table>
-    <hr class="sep" />
-
-    <div class="section-label">المصروفات</div>
-    <div class="row"><span>إجمالي المصروفات</span><span>${fmt(expenses.total_expenses)}</span></div>
-
-    <div class="grand-box">
-      <div class="gr"><span>صافي الربح</span><span>${fmt(netProfit)}</span></div>
-    </div>
-    <hr class="sep" />
-
-    <div class="footer">طُبع: ${new Date().toLocaleDateString('ar-EG')}</div>
-  </div></body></html>`);
-    win.document.close();
-    win.focus();
-    setTimeout(() => { win.print(); }, 300);
+        const printed = await openAndPrint(lines.join('\n'), 'inv', 'report');
+        if (!printed) alert('تعذر طباعة تقرير الإغلاق اليومي');
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

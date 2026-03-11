@@ -46,7 +46,7 @@ router.post('/batch', authenticateToken, async (req, res) => {
                 JSON.stringify(settings),
                 req,
                 'System',
-                'Settings'
+                null
             );
         }
 

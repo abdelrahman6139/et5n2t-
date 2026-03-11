@@ -1,0 +1,18 @@
+{
+  "port": 5078,
+  "receiptPrinter": "inv2",
+  "kitchenPrinter": "inv2",
+  "paperWidthMm": 80,
+  "restaurantName": "اسم المطعم",
+  "restaurantPhone": "",
+  "restaurantAddress": "",
+  "footerMessage": "شكراً لزيارتكم",
+  "logoPath": "",
+  "_comments": {
+    "port": "Port the agent listens on — must match API setting print_agent_url",
+    "receiptPrinter": "Exact Windows printer name for customer receipts",
+    "kitchenPrinter": "Exact Windows printer name for kitchen tickets",
+    "paperWidthMm": "Paper roll width in mm — 80 or 58",
+    "logoPath": "Absolute path to logo image (PNG/JPG). Leave empty for no logo."
+  }
+}

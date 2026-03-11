@@ -150,6 +150,8 @@ const DeliveryScreen: React.FC = () => {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [selectedDriverId, setSelectedDriverId] = useState('');
   const [showOnlyGPS, setShowOnlyGPS] = useState(false);
+  const [reassignOrderId, setReassignOrderId] = useState<string | null>(null);
+  const [showReassignModal, setShowReassignModal] = useState(false);
 
   // ✅ Get display order number
   const getOrderNumber = (order: Order): string => {
@@ -240,6 +242,52 @@ const DeliveryScreen: React.FC = () => {
     } catch (error) {
       console.error('Error assigning driver:', error);
       alert('❌ حدث خطأ أثناء تعيين السائق');
+    }
+  };
+
+  const handleUnassignDriver = async (orderId: string) => {
+    if (!window.confirm('هل تريد إزالة السائق من هذا الطلب وإرجاعه للقائمة؟')) return;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/orders/${orderId}/unassign-driver`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        fetchOrders();
+        fetchActiveDrivers();
+      } else {
+        const errData = await response.json().catch(() => null);
+        alert(`❌ فشل إزالة السائق: ${errData?.error || response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Error unassigning driver:', error);
+      alert('❌ حدث خطأ أثناء إزالة السائق');
+    }
+  };
+
+  const handleReassignDriver = async () => {
+    if (!reassignOrderId || !selectedDriverId) return;
+    try {
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_BASE_URL}/orders/${reassignOrderId}/assign-driver`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ driver_id: selectedDriverId }),
+      });
+      if (response.ok) {
+        setShowReassignModal(false);
+        setReassignOrderId(null);
+        setSelectedDriverId('');
+        fetchOrders();
+        fetchActiveDrivers();
+      } else {
+        const errData = await response.json().catch(() => null);
+        alert(`❌ فشل إعادة التعيين: ${errData?.error || response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Error reassigning driver:', error);
+      alert('❌ حدث خطأ');
     }
   };
 
@@ -368,95 +416,55 @@ const DeliveryScreen: React.FC = () => {
             .map((order) => {
               const statusInfo = getStatusDisplay(order.status);
               const assignedDriver = order.driver_id ? activeDrivers[order.driver_id] : null;
-              const hasGPS = Number(order.latitude) && Number(order.longitude) &&
-                !(Number(order.latitude) === 24.7136 && Number(order.longitude) === 46.6753);
 
               return (
                 <div
                   key={order.id}
                   style={{
-                    padding: '16px',
-                    borderBottom: '1px solid #1f2937',
-                    backgroundColor: order.driver_id ? '#f0fdf4' : 'white',  // Green tint if assigned
-                    borderLeft: order.driver_id ? '4px solid #10b981' : 'none'  // Green left border if assigned
+                    padding: '8px 10px',
+                    borderBottom: '1px solid #e5e7eb',
+                    backgroundColor: order.driver_id ? '#f0fdf4' : 'white',
+                    borderLeft: order.driver_id ? '3px solid #10b981' : '3px solid transparent',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', gap: 8 }}>
-                    <span style={{ fontWeight: 'bold', fontSize: '16px', color: "#1f2937" }}>
+                  {/* Row 1: Order number + Status */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#1f2937' }}>
                       {getOrderNumber(order)}
                     </span>
-                    {/* ✅ GPS Badge */}
-                    {!hasGPS ? (
-                      <span style={{
-                        fontSize: '11px',
-                        backgroundColor: '#fef3c7',
-                        color: '#92400e',
-                        padding: '2px 8px',
-                        borderRadius: '12px',
-                        fontWeight: 'bold',
-                      }}>
-                        ⚠️ No GPS
-                      </span>
-                    ) : (
-                      <span style={{
-                        fontSize: '11px',
-                        backgroundColor: '#d1fae5',
-                        color: '#065f46',
-                        padding: '2px 8px',
-                        borderRadius: '12px',
-                        fontWeight: 'bold',
-                      }}>
-                        📍 GPS
-                      </span>
-                    )}
-                    <div style={{ backgroundColor: statusInfo.color, color: 'white', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', fontWeight: 'bold' }}>
+                    <span style={{ backgroundColor: statusInfo.color, color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '10px', fontWeight: 'bold' }}>
                       {statusInfo.text}
-                    </div>
+                    </span>
                   </div>
-                  {/* ✅ Address with GPS warning */}
-                  <div style={{ fontSize: '13px', color: '#1f2937', marginTop: '4px' }}>
-                    📍 {order.address || 'No address'}
-                    {!hasGPS && (
-                      <span style={{ color: '#dc2626', fontWeight: 'bold', marginRight: '8px' }}>
-                        (GPS سيضاف من السائق)
-                      </span>
-                    )}
+                  {/* Row 2: Address */}
+                  <div style={{ fontSize: '11px', color: '#6b7280', marginBottom: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    📍 {order.address || 'بدون عنوان'}
                   </div>
-                  <div style={{ fontSize: '13px', color: '#1f2937', marginTop: '4px' }}>
-                    📞 {order.phone}
-                  </div>
-                  <div style={{ fontSize: '14px', fontWeight: 'bold', marginTop: '8px', color: '#1f2937' }}>
-                    💰 {order.total} ج.م
-                  </div>
-
+                  {/* Row 3: Assign button */}
                   <button
                     onClick={() => {
                       setSelectedOrder(order);
                       setShowAssignModal(true);
                     }}
-                    disabled={!!order.driver_id}  // ✅ Only disable if already assigned
+                    disabled={!!order.driver_id}
                     style={{
                       width: '100%',
-                      padding: '8px',
-                      backgroundColor: order.driver_id ? '#10b981' : '#3b82f6',  // Always blue if not assigned
+                      padding: '5px',
+                      backgroundColor: order.driver_id ? '#10b981' : '#3b82f6',
                       color: 'white',
                       border: 'none',
                       borderRadius: '6px',
                       cursor: order.driver_id ? 'not-allowed' : 'pointer',
                       fontWeight: 'bold',
-                      marginTop: '8px',
-                      fontSize: '13px',
+                      fontSize: '11px',
                     }}
                   >
                     {order.driver_id
-                      ? `🏍️ ${assignedDriver?.driver_name || `السائق #${order.driver_id}`}`
+                      ? `🏍️ ${assignedDriver?.driver_name || `سائق #${order.driver_id}`}`
                       : 'تعيين سائق'}
                   </button>
-
-
                 </div>
               );
-
             })}
         </div>
 
@@ -579,8 +587,8 @@ const DeliveryScreen: React.FC = () => {
         </div>
 
 
-        {/* Active Drivers Sidebar - Narrower */}
-        <div style={{ width: '240px', overflowY: 'auto' }}>
+        {/* Active Drivers Sidebar */}
+        <div style={{ width: '280px', overflowY: 'auto' }}>
           <h3 style={{ color: '#ffffffff', marginBottom: '12px' }}>
             سائقين نشطين ({Object.keys(activeDrivers).length})
           </h3>
@@ -592,42 +600,93 @@ const DeliveryScreen: React.FC = () => {
               <div
                 key={driver.driver_id}
                 style={{
-                  padding: '14px',
+                  padding: '12px',
                   backgroundColor: 'white',
                   borderRadius: '10px',
-                  marginBottom: '12px',
+                  marginBottom: '10px',
                   boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
                   border: `2px solid ${statusColor}`,
                 }}
               >
-                <div style={{ fontSize: 15, fontWeight: 'bold', marginBottom: 6, color: '#1f2937' }}>
-                  {driver.driver_name || driver.driver_id}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <div style={{ fontSize: 14, fontWeight: 'bold', color: '#1f2937' }}>
+                    {driver.driver_name || driver.driver_id}
+                  </div>
+                  <span style={{
+                    padding: '2px 8px',
+                    borderRadius: '6px',
+                    backgroundColor: statusColor,
+                    color: 'white',
+                    fontSize: 11,
+                    fontWeight: 'bold',
+                  }}>
+                    {ordersCount > 0 ? `${ordersCount} طلبات` : 'متاح'}
+                  </span>
                 </div>
 
-                {/* Badge with order count */}
-                <div style={{
-                  padding: '4px 10px',
-                  borderRadius: '6px',
-                  backgroundColor: statusColor,
-                  color: 'white',
-                  fontSize: 12,
-                  fontWeight: 'bold',
-                  display: 'inline-block',
-                  marginBottom: 8
-                }}>
-                  {ordersCount > 0 ? `${ordersCount} طلبات` : 'متاح'}
-                </div>
-
-                {/* List of assigned orders */}
+                {/* Assigned orders with action buttons */}
                 {driver.assigned_orders && driver.assigned_orders.length > 0 && (
-                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #e5e7eb' }}>
-                    {driver.assigned_orders.map((order, idx) => (
+                  <div style={{ borderTop: '1px solid #e5e7eb', paddingTop: 6 }}>
+                    {driver.assigned_orders.map((order) => (
                       <div key={order.order_id} style={{
                         fontSize: 11,
-                        color: '#6b7280',
-                        marginBottom: '3px'
+                        padding: '6px 8px',
+                        backgroundColor: '#f9fafb',
+                        borderRadius: '6px',
+                        marginBottom: '4px',
                       }}>
-                        • {order.order_no} - {order.customer_name}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <span style={{ fontWeight: 'bold', color: '#1f2937' }}>{order.order_no || `#${order.order_id}`}</span>
+                          <span style={{
+                            fontSize: 9,
+                            padding: '1px 6px',
+                            borderRadius: '8px',
+                            backgroundColor: order.status === 'Delivering' ? '#d1fae5' : '#fef3c7',
+                            color: order.status === 'Delivering' ? '#065f46' : '#92400e',
+                            fontWeight: 'bold',
+                          }}>
+                            {order.status === 'Delivering' ? 'في الطريق' : order.status === 'Confirmed' ? 'مؤكد' : order.status}
+                          </span>
+                        </div>
+                        <div style={{ color: '#6b7280', marginBottom: 4 }}>{order.customer_name}</div>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button
+                            onClick={() => handleUnassignDriver(order.order_id)}
+                            style={{
+                              flex: 1,
+                              padding: '3px 0',
+                              fontSize: 10,
+                              fontWeight: 'bold',
+                              backgroundColor: '#fef2f2',
+                              color: '#dc2626',
+                              border: '1px solid #fecaca',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ❌ إزالة
+                          </button>
+                          <button
+                            onClick={() => {
+                              setReassignOrderId(order.order_id);
+                              setSelectedDriverId('');
+                              setShowReassignModal(true);
+                            }}
+                            style={{
+                              flex: 1,
+                              padding: '3px 0',
+                              fontSize: 10,
+                              fontWeight: 'bold',
+                              backgroundColor: '#eff6ff',
+                              color: '#2563eb',
+                              border: '1px solid #bfdbfe',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            🔄 نقل لسائق
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -635,7 +694,6 @@ const DeliveryScreen: React.FC = () => {
               </div>
             );
           })}
-
         </div>
       </div>
 
@@ -799,6 +857,80 @@ const DeliveryScreen: React.FC = () => {
           </div>
         )
       }
+
+      {/* Reassign Driver Modal */}
+      {showReassignModal && reassignOrderId && (
+        <div
+          onClick={() => { setShowReassignModal(false); setReassignOrderId(null); setSelectedDriverId(''); }}
+          style={{
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            display: 'flex', justifyContent: 'center', alignItems: 'center',
+            zIndex: 1000,
+          }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{
+            backgroundColor: 'white', padding: '24px', borderRadius: '16px',
+            maxWidth: '400px', width: '90%',
+          }}>
+            <h3 style={{ marginBottom: '16px', color: '#1f2937' }}>
+              نقل الطلب لسائق آخر
+            </h3>
+            <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+              {Object.values(activeDrivers)
+                .sort((a: Driver, b: Driver) => (a.active_orders_count || 0) - (b.active_orders_count || 0))
+                .map((driver: Driver) => (
+                  <div
+                    key={driver.driver_id}
+                    onClick={() => setSelectedDriverId(driver.driver_id)}
+                    style={{
+                      padding: '12px',
+                      marginBottom: '8px',
+                      border: selectedDriverId === driver.driver_id ? '2px solid #2563eb' : '2px solid #e5e7eb',
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      backgroundColor: selectedDriverId === driver.driver_id ? '#eff6ff' : 'white',
+                    }}
+                  >
+                    <div style={{ fontWeight: 'bold', fontSize: 14, color: '#1f2937' }}>{driver.driver_name}</div>
+                    <div style={{
+                      fontSize: 12,
+                      color: (driver.active_orders_count || 0) > 0 ? '#f59e0b' : '#10b981',
+                      marginTop: 2,
+                    }}>
+                      {(driver.active_orders_count || 0) > 0
+                        ? `مشغول - ${driver.active_orders_count} طلبات`
+                        : 'متاح'}
+                    </div>
+                  </div>
+                ))}
+            </div>
+            <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
+              <button
+                onClick={() => { setShowReassignModal(false); setReassignOrderId(null); setSelectedDriverId(''); }}
+                style={{
+                  padding: '10px 20px', borderRadius: '8px', border: '2px solid #e5e7eb',
+                  backgroundColor: 'white', cursor: 'pointer', fontWeight: 'bold', color: '#1f2937',
+                }}
+              >
+                إلغاء
+              </button>
+              <button
+                onClick={handleReassignDriver}
+                disabled={!selectedDriverId}
+                style={{
+                  flex: 1, padding: '10px 20px', borderRadius: '8px', border: 'none',
+                  backgroundColor: selectedDriverId ? '#2563eb' : '#d1d5db',
+                  color: 'white', cursor: selectedDriverId ? 'pointer' : 'not-allowed',
+                  fontWeight: 'bold', fontSize: '14px',
+                }}
+              >
+                🔄 نقل
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 

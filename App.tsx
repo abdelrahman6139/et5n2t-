@@ -150,7 +150,7 @@ const App: React.FC = () => {
       case Screen.DayClosing:
         return <DayClosingScreen />;
       default:
-        return <Dashboard navigateTo={navigateTo} />;
+        return <Dashboard navigateTo={navigateTo} user={user} />;
     }
   }, [currentScreen, navigateTo, theme, toggleTheme, handleEditOrder, orderToEdit, handleOrderUpdateDone, tables, parkedOrders, hasOpenTables]);
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { shifts as shiftsApi } from '../utils/api';
+import { openAndPrint } from '../utils/printService';
 
 interface Shift {
   id: number;
@@ -35,7 +36,12 @@ interface ShiftSummary {
   };
 }
 
-const ClosingScreen: React.FC = () => {
+interface ClosingScreenProps {
+  hasOpenTables?: boolean;
+  onAfterClose?: () => void;
+}
+
+const ClosingScreen: React.FC<ClosingScreenProps> = ({ hasOpenTables, onAfterClose }) => {
   const [currentShift, setCurrentShift] = useState<Shift | null>(null);
   const [shiftSummary, setShiftSummary] = useState<ShiftSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -161,11 +167,8 @@ const ClosingScreen: React.FC = () => {
     }
   };
 
-  const handlePrintReport = () => {
+  const handlePrintReport = async () => {
     if (!currentShift || !shiftSummary) return;
-
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
 
     const shift = shiftSummary.shift;
     const orders = shiftSummary.orders;
@@ -184,113 +187,35 @@ const ClosingScreen: React.FC = () => {
       Number(expenses.total_expenses || 0)
     ).toFixed(2);
 
-    const html = `<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<head>
-  <meta charset="UTF-8">
-  <title>Z-Report - وردية ${shift.id}</title>
-  <style>
-    @page { size: 80mm auto; margin: 2mm; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'Arial Unicode MS', 'Segoe UI', Tahoma, Arial, sans-serif;
-      font-size: 13px;
-      font-weight: 700;
-      direction: rtl;
-      background: #fff;
-      color: #000;
-      width: 80mm;
-    }
-    .wrap { width: 76mm; margin: 0 auto; padding: 4px 2px; }
-    .title { font-size: 17px; font-weight: 900; text-align: center; margin-bottom: 2px; }
-    .subtitle { font-size: 13px; text-align: center; font-weight: 700; }
-    .sep { border: none; border-top: 1px dashed #000; margin: 5px 0; }
-    .section-label {
-      font-size: 13px;
-      font-weight: 900;
-      background: #DCDCDC;
-      border: 0.75px solid #000;
-      padding: 3px 5px;
-      margin: 4px 0 2px 0;
-      text-align: center;
-    }
-    .row {
-      display: flex;
-      justify-content: space-between;
-      padding: 2px 0;
-      font-size: 13px;
-      border-bottom: 1px dotted #ccc;
-    }
-    .row:last-child { border-bottom: none; }
-    .grand-box {
-      border: 1px solid #000;
-      padding: 5px;
-      margin-top: 5px;
-      font-size: 15px;
-      font-weight: 900;
-    }
-    .grand-box .grow {
-      display: flex;
-      justify-content: space-between;
-    }
-    .footer {
-      text-align: center;
-      font-size: 12px;
-      margin-top: 6px;
-      font-weight: 800;
-      line-height: 1.7;
-    }
-    @media print { body { width: 80mm; } }
-  </style>
-</head>
-<body>
-<div class="wrap">
-  <div class="title">Z-Report</div>
-  <div class="subtitle">تقرير إغلاق الوردية</div>
-  <hr class="sep" />
+    const lines: string[] = [];
+    lines.push('[Z-Report]');
+    lines.push('[تقرير إغلاق الوردية]');
+    lines.push('------------------------------------------');
+    lines.push(`رقم الوردية: ${shift.id}`);
+    lines.push(`الكاشير: ${shift.cashier_name || '-'}`);
+    lines.push(`الفتح: ${fmtDate(shift.opened_at)}`);
+    if (shift.closed_at) lines.push(`الإغلاق: ${fmtDate(shift.closed_at)}`);
+    lines.push('------------------------------------------');
+    lines.push('[النقدية]');
+    lines.push(`النقدية الافتتاحية\t${fmt(shift.opening_cash)}`);
+    lines.push(`مبيعات نقدية\t${fmt(orders.total_cash)}`);
+    lines.push(`مصروفات\t${fmt(expenses.total_expenses)}`);
+    lines.push(`النقدية المتوقعة\t${expectedCash}`);
+    lines.push('------------------------------------------');
+    lines.push('[ملخص المبيعات]');
+    lines.push(`عدد الطلبات\t${orders.total_orders || 0}`);
+    lines.push(`إجمالي المبيعات\t${fmt(orders.total_sales)}`);
+    lines.push(`مبيعات نقدية\t${fmt(orders.total_cash)}`);
+    lines.push(`مبيعات بطاقة\t${fmt(orders.total_visa)}`);
+    lines.push(`إجمالي التوصيل\t${fmt(orders.total_delivery)}`);
+    lines.push('------------------------------------------');
+    lines.push('[المصروفات]');
+    lines.push(`إجمالي المصروفات\t${fmt(expenses.total_expenses)}`);
+    lines.push('------------------------------------------');
+    lines.push(`طُبع: ${new Date().toLocaleDateString('ar-EG')}`);
 
-  <div class="row"><span>رقم الوردية</span><span>${shift.id}</span></div>
-  <div class="row"><span>الكاشير</span><span>${shift.cashier_name || '-'}</span></div>
-  <div class="row"><span>الفتح</span><span>${fmtDate(shift.opened_at)}</span></div>
-  ${shift.closed_at ? `<div class="row"><span>الإغلاق</span><span>${fmtDate(shift.closed_at)}</span></div>` : ''}
-  <hr class="sep" />
-
-  <div class="section-label">النقدية</div>
-  <div class="row"><span>النقدية الافتتاحية</span><span>${fmt(shift.opening_cash)}</span></div>
-  <div class="row"><span>مبيعات نقدية</span><span>${fmt(orders.total_cash)}</span></div>
-  <div class="row"><span>مصروفات</span><span>${fmt(expenses.total_expenses)}</span></div>
-
-  <div class="grand-box">
-    <div class="grow"><span>النقدية المتوقعة</span><span>${expectedCash}</span></div>
-  </div>
-  <hr class="sep" />
-
-  <div class="section-label">ملخص المبيعات</div>
-  <div class="row"><span>عدد الطلبات</span><span>${orders.total_orders || 0}</span></div>
-  <div class="row"><span>إجمالي المبيعات</span><span>${fmt(orders.total_sales)}</span></div>
-  <div class="row"><span>مبيعات نقدية</span><span>${fmt(orders.total_cash)}</span></div>
-  <div class="row"><span>مبيعات بطاقة</span><span>${fmt(orders.total_visa)}</span></div>
-  <div class="row"><span>إجمالي التوصيل</span><span>${fmt(orders.total_delivery)}</span></div>
-  <hr class="sep" />
-
-  <div class="section-label">المصروفات</div>
-  <div class="row"><span>إجمالي المصروفات</span><span>${fmt(expenses.total_expenses)}</span></div>
-  <hr class="sep" />
-
-  <div class="footer">
-    <div>طُبع: ${new Date().toLocaleDateString('ar-EG')}</div>
-  </div>
-</div>
-</body>
-</html>`;
-
-    printWindow.document.write(html);
-    printWindow.document.close();
-    printWindow.focus();
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
-    }, 300);
+    const printed = await openAndPrint(lines.join('\n'), 'inv', 'report');
+    if (!printed) alert('تعذر طباعة تقرير الوردية');
   };
 
   if (loading) {

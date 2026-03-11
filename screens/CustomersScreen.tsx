@@ -46,9 +46,9 @@ const CustomersScreen: React.FC = () => {
       // Map backend data to frontend format
       const mappedCustomers = response.data.map((c: any) => ({
         id: c.id,
-        firstName: c.first_name,
-        lastName: c.last_name,
-        phone: c.phone,
+        firstName: c.first_name || '',
+        lastName: c.last_name || '',
+        phone: c.phone || '',
         lastZoneId: c.last_zone_id || null,
         lastZoneName: c.last_zone_name || null,
         locations: (c.locations || []).map((loc: any) => ({
@@ -76,8 +76,8 @@ const CustomersScreen: React.FC = () => {
   };
 
   const filteredCustomers = customers.filter(customer =>
-    `${customer.firstName} ${customer.lastName}`.includes(searchTerm) ||
-    customer.phone.includes(searchTerm)
+    `${customer.firstName} ${customer.lastName}`.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (customer.phone || '').includes(searchTerm)
   );
 
   const handleAddNew = () => {

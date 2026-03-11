@@ -1,84 +1,75 @@
+﻿/**
+ * printerRoutes.js
+ *
+ * Architecture: Frontend  Local Print Agent (direct)
+ *
+ * The frontend calls the local print agent (http://localhost:5078) directly
+ * for all print jobs. The VPS backend is NOT involved in proxying print jobs
+ * (it cannot reach the cashier's localhost from a remote server).
+ *
+ * This backend module only handles:
+ *   GET  /api/printers/agent-url      read the agent URL from DB settings
+ *   POST /api/printers/agent-url      save the agent URL to DB settings
+ *   GET  /api/printers/agent-status   returns stored URL for UI display
+ */
+
 import express from 'express';
 import pool from '../db.js';
 import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Get all printers
-router.get('/', authenticateToken, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT p.*, k.name as kitchen_name 
-      FROM printers p
-      LEFT JOIN kitchens k ON p.kitchen_id = k.id
-      ORDER BY p.name
-    `);
-    res.json({ success: true, data: result.rows });
-  } catch (error) {
-    console.error('Get printers error:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch printers' });
-  }
-});
+const DEFAULT_AGENT_URL = 'http://localhost:5078';
 
-// Create printer
-router.post('/', authenticateToken, async (req, res) => {
+async function getAgentUrl() {
   try {
-    const { name, type, kitchen_id } = req.body;
-    
-    if (!name || !kitchen_id) {
-      return res.status(400).json({ success: false, error: 'Name and kitchen are required' });
-    }
-
-    const result = await pool.query(
-      'INSERT INTO printers (name, type, kitchen_id) VALUES ($1, $2, $3) RETURNING *',
-      [name, type || 'Printer', kitchen_id]
+    const { rows } = await pool.query(
+      "SELECT value FROM settings WHERE key = 'print_agent_url' LIMIT 1",
     );
-
-    res.status(201).json({ success: true, data: result.rows[0] });
-  } catch (error) {
-    console.error('Create printer error:', error);
-    res.status(500).json({ success: false, error: 'Failed to create printer' });
+    return (rows[0]?.value ?? '').trim() || DEFAULT_AGENT_URL;
+  } catch {
+    return DEFAULT_AGENT_URL;
   }
+}
+
+/**
+ * GET /api/printers/agent-url
+ * Returns { url }  frontend caches this and calls the agent directly.
+ */
+router.get('/agent-url', authenticateToken, async (_req, res) => {
+  const url = await getAgentUrl();
+  res.json({ url });
 });
 
-// Update printer
-router.put('/:id', authenticateToken, async (req, res) => {
+/**
+ * POST /api/printers/agent-url
+ * Body: { url: string }
+ * Saves the print-agent URL to settings so all POS terminals share the same agent.
+ */
+router.post('/agent-url', authenticateToken, async (req, res) => {
+  const { url } = req.body ?? {};
+  if (!url) return res.status(400).json({ error: 'url is required' });
   try {
-    const { id } = req.params;
-    const { name, type, kitchen_id } = req.body;
-
-    const result = await pool.query(
-      'UPDATE printers SET name = $1, type = $2, kitchen_id = $3 WHERE id = $4 RETURNING *',
-      [name, type, kitchen_id, id]
+    await pool.query(
+      `INSERT INTO settings (key, value)
+       VALUES ('print_agent_url', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [url.trim()],
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Printer not found' });
-    }
-
-    res.json({ success: true, data: result.rows[0] });
-  } catch (error) {
-    console.error('Update printer error:', error);
-    res.status(500).json({ success: false, error: 'Failed to update printer' });
+    return res.json({ success: true, url: url.trim() });
+  } catch (err) {
+    console.error('[printerRoutes] save agent-url error:', err.message);
+    return res.status(500).json({ error: 'Failed to save agent URL' });
   }
 });
 
-// Delete printer
-router.delete('/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const result = await pool.query('DELETE FROM printers WHERE id = $1 RETURNING id', [id]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Printer not found' });
-    }
-
-    res.json({ success: true, message: 'Printer deleted successfully' });
-  } catch (error) {
-    console.error('Delete printer error:', error);
-    res.status(500).json({ success: false, error: 'Failed to delete printer' });
-  }
+/**
+ * GET /api/printers/agent-status
+ * Returns stored agent URL. Frontend pings the agent directly to check if online.
+ */
+router.get('/agent-status', authenticateToken, async (_req, res) => {
+  const url = await getAgentUrl();
+  res.json({ url });
 });
 
 export default router;

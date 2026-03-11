@@ -17,8 +17,7 @@ import { menu as menuApi, orders as ordersApi, customers as customersApi, halls 
 import { NotesIcon, TrashIcon, PlusCircleIcon, HomeIcon, DeliveryIcon, PosIcon, TableIcon, XIcon } from '../components/icons';
 
 import { settings as settingsApi } from '../utils/api'; // Import settings API
-import { printKitchenReceipt } from '../utils/printReports'; // Import kitchen printer
-import { buildCustomerReceiptHTML, openAndPrint } from '../utils/receiptPrint';
+import { printKitchenReceipt, buildCustomerReceiptHTML, openAndPrintData } from '../utils/printService';
 
 const DEFAULT_TAX_RATE = 0.14;
 const DEFAULT_SERVICE_CHARGE_RATE = 0.12;
@@ -51,7 +50,7 @@ interface POSProps {
   updateParkedOrders: (orders: Record<number, OrderItem[]>) => void;
 }
 
-const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpdated, tables, parkedOrders, updateTables, updateParkedOrders }) => {
+function POS({ navigateToDashboard, orderToEdit, onOrderUpdated, tables, parkedOrders, updateTables, updateParkedOrders }: POSProps) {
   const [currentOrder, setCurrentOrder] = useState<OrderItem[]>([]);
   // Default to Takeaway immediately — fetchSettings will correct if it's disabled
   const [activeSalesCenter, setActiveSalesCenter] = useState<SalesCenter | null>(SalesCenter.Takeaway);
@@ -311,9 +310,9 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
       const response = await customersApi.getAll();
       const mapped = response.data.map((c: any) => ({
         id: c.id,
-        firstName: c.first_name,
-        lastName: c.last_name,
-        phone: c.phone,
+        firstName: c.first_name || '',
+        lastName: c.last_name || '',
+        phone: c.phone || '',
         lastZoneId: c.last_zone_id || null,
         lastZoneName: c.last_zone_name || null,
         locations: (c.locations || []).map((loc: any) => ({
@@ -471,11 +470,37 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
   const paymentLabel = (method: string): string =>
     method === 'card' ? 'بطاقة' : 'نقدي';
 
+  const FIXED_KITCHEN_PRINTER = 'inv2';
+
   const printCustomerReceipt = (
     orderNumber: string | number,
     createdAt: Date,
     salesCenterValue: SalesCenter | string,
   ) => {
+    const kitchenTypeMap: Record<string, 'DineIn' | 'Takeaway' | 'Delivery'> = {
+      DineIn: 'DineIn',
+      Takeaway: 'Takeaway',
+      Delivery: 'Delivery',
+    };
+
+    // Always print kitchen ticket together with customer receipt in POS
+    printKitchenReceipt({
+      orderNumber: String(orderNumber),
+      orderType: kitchenTypeMap[String(salesCenterValue)] ?? 'Takeaway',
+      tableNumber: selectedTable ? `${selectedHall?.name} - ${selectedTable.name}` : undefined,
+      customerName: selectedCustomer ? `${selectedCustomer.firstName} ${selectedCustomer.lastName}` : undefined,
+      customerPhone: selectedCustomer?.phone,
+      items: currentOrder.map(item => {
+        const optLines = (item.selectedNoteOptions || [])
+          .map(o => `✓ ${o.name}${Number(o.price) > 0 ? ` (+${Number(o.price).toFixed(2)})` : ''}`);
+        const noteLines = item.notes ? [item.notes] : [];
+        const combined = [...optLines, ...noteLines].join(' | ');
+        return { name: item.name, quantity: item.quantity, notes: combined || undefined };
+      }),
+      createdAt,
+      printerName: FIXED_KITCHEN_PRINTER,
+    });
+
     const resolvedName =
       selectedCustomer
         ? `${selectedCustomer.firstName || ''} ${selectedCustomer.lastName || ''}`.trim()
@@ -531,7 +556,29 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
       customerPhone: selectedCustomer?.phone,
       customerAddress: buildAddress(),
     });
-    openAndPrint(html, receiptPrinterName, 'receipt');
+    const targetPrinter = (receiptPrinterName || 'inv2').trim();
+    // Send structured data directly to C# — no HTML parsing needed
+    void openAndPrintData('receipt', targetPrinter, {
+      orderNumber,
+      createdAt,
+      salesCenterLabel: salesCenterLabel(salesCenterValue),
+      tableNumber: selectedTable?.name,
+      hallName: selectedHall?.name,
+      paymentLabel: paymentLabel(paymentMethod),
+      items: lineItems,
+      subtotal,
+      tax: taxAmount,
+      deliveryFee,
+      serviceCharge,
+      total: orderTotal,
+      customerName: resolvedName,
+      customerPhone: selectedCustomer?.phone,
+      customerAddress: buildAddress(),
+    }).then((printed) => {
+      if (!printed) {
+        console.warn('[Print] Receipt failed — check C# PrintService is running on port 5078');
+      }
+    });
   };
 
   /**
@@ -569,7 +616,7 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
 
     // Print one ticket per printer group
     for (const [key, groupItems] of groups) {
-      const printerName = key === '__default__' ? kitchenPrinterName : key;
+      const printerName = FIXED_KITCHEN_PRINTER;
       printKitchenReceipt({
         orderNumber: params.orderNumber,
         orderType: params.orderType,
@@ -969,17 +1016,6 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
         const orderId = response.data.data.user_facing_id;
         const createdAt = response.data.data?.created_at ? new Date(response.data.data.created_at) : new Date();
 
-        // ✅ Print Kitchen Receipt (grouped by item printer)
-        printGroupedKitchenTickets({
-          orderNumber: orderId,
-          orderType: salesCenterMap[activeSalesCenter!] as 'DineIn' | 'Takeaway' | 'Delivery',
-          tableNumber: selectedTable ? `${selectedHall?.name} - ${selectedTable.name}` : undefined,
-          customerName: selectedCustomer ? `${selectedCustomer.firstName} ${selectedCustomer.lastName}` : undefined,
-          customerPhone: selectedCustomer?.phone,
-          items: currentOrder,
-          createdAt,
-        });
-
         // ✅ Print Customer Receipt
         printCustomerReceipt(orderId, createdAt, salesCenterMap[activeSalesCenter!]);
 
@@ -1090,20 +1126,6 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
       const updatedCreatedAt = response.data.data?.created_at
         ? new Date(response.data.data.created_at)
         : new Date();
-
-      // Print Kitchen Receipt (grouped by item printer)
-      printGroupedKitchenTickets({
-        orderNumber: orderToEdit.orderNo || `ORD-${orderToEdit.id}`,
-        orderType: (salesCenterMap[salesCenterValue as SalesCenter] || 'DineIn') as 'DineIn' | 'Takeaway' | 'Delivery',
-        tableNumber: selectedTable ? `${selectedHall?.name} - ${selectedTable.name}` : undefined,
-        customerName: selectedCustomer ? `${selectedCustomer.firstName} ${selectedCustomer.lastName}` : undefined,
-        customerPhone: selectedCustomer?.phone,
-        items: currentOrder,
-        createdAt: updatedCreatedAt,
-        isUpdate: true,
-        originalOrderNumber: updatedOrderNumber,
-        version: newVersion,
-      });
 
       printCustomerReceipt(
         updatedOrderNumber,
@@ -1581,7 +1603,7 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
       zoneId: '' // ✅ Add zoneId
     });
     const filteredCustomers = customers.filter(
-      c => c.phone.includes(searchTerm) || `${c.firstName} ${c.lastName}`.includes(searchTerm)
+      c => (c.phone || '').includes(searchTerm) || `${c.firstName} ${c.lastName}`.toLowerCase().includes(searchTerm.toLowerCase())
     );
     const handleSaveNewCustomer = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -1734,6 +1756,8 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
   }> = ({ item, allNoteOptions, onSave, onClose }) => {
     const [notes, setNotes] = useState(item.notes || '');
     const [selectedOpts, setSelectedOpts] = useState<NoteOption[]>(item.selectedNoteOptions || []);
+    const [activeTab, setActiveTab] = useState<'notes' | 'additions'>('notes');
+
 
     const toggleOpt = (opt: NoteOption) => {
       setSelectedOpts(prev =>
@@ -1743,69 +1767,142 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
       );
     };
 
-    const availableOptions: NoteOption[] = allNoteOptions.filter(o => (o as any).is_active !== false);
+     const availableOptions: NoteOption[] = allNoteOptions.filter(o => (o as any).is_active !== false);
+    const freeOptions = availableOptions.filter(o => Number(o.price) === 0);
+    const paidOptions = availableOptions.filter(o => Number(o.price) > 0);
     const addedModifiersTotal = selectedOpts.reduce((s, o) => s + Number(o.price), 0);
+    const freeSelectedCount = selectedOpts.filter(o => Number(o.price) === 0).length;
+    const paidSelectedCount = selectedOpts.filter(o => Number(o.price) > 0).length;
+
 
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-        <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl">
-          <div className="flex justify-between items-center mb-4 pb-2 border-b dark:border-gray-700">
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-amber-400 p-2">ملاحظات: "{item.name}"</h2>
+        <div className="bg-white dark:bg-gray-900 rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+          {/* Header */}
+          <div className="flex justify-between items-center px-6 py-4 border-b dark:border-gray-700">
+            <h2 className="text-2xl font-bold text-gray-800 dark:text-amber-400">ملاحظات: "{item.name}"</h2>
             <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition">
               <XIcon className="w-6 h-6" />
             </button>
           </div>
 
-          <div className="overflow-y-auto flex-1 pr-2 space-y-6 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
-            {/* Standard note options */}
-            {availableOptions.length > 0 && (
-              <div>
-                <p className="text-lg font-bold text-gray-700 dark:text-gray-300 mb-3 bg-gray-100 dark:bg-gray-800 p-2 rounded-lg inline-block">إضافات سريعة:</p>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {availableOptions.map(opt => {
-                    const isChecked = !!selectedOpts.find(o => o.id === opt.id);
-                    return (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => toggleOpt(opt)}
-                        className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all transform active:scale-95 ${isChecked
-                          ? 'border-blue-500 bg-blue-50 dark:border-amber-500 dark:bg-amber-900/20 text-blue-700 dark:text-amber-400 hover:bg-blue-100 dark:hover:bg-amber-900/30'
-                          : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
-                          }`}
-                      >
-                        <span className="font-bold text-center leading-tight mb-1">{opt.name}</span>
-                        <span className={`text-sm font-bold w-full text-center px-2 py-0.5 rounded-md ${isChecked ? 'bg-blue-200/50 dark:bg-amber-500/20 text-blue-800 dark:text-amber-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}`}>
-                          {Number(opt.price) > 0 ? `+${Number(opt.price).toFixed(2)}` : 'مجاني'}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {addedModifiersTotal > 0 && (
-                  <div className="mt-3 flex justify-end">
-                    <p className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg text-amber-800 dark:text-amber-400 font-bold">
-                      إجمالي الإضافات: +{addedModifiersTotal.toFixed(2)} ج.م
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Free text note */}
-            <div>
-              <p className="text-lg font-bold text-gray-700 dark:text-gray-300 mb-2">ملاحظة حرة (اختياري):</p>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={3}
-                placeholder="اكتب أي ملاحظات إضافية هنا... (مثال: بدون ثوم إضافي)"
-                className="w-full p-4 border-2 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-200 dark:bg-gray-800 dark:border-gray-600 text-lg shadow-sm"
-              />
-            </div>
+          {/* Tab Buttons */}
+          <div className="flex border-b dark:border-gray-700 px-4 bg-gray-50 dark:bg-gray-800/50">
+            <button
+              onClick={() => setActiveTab('notes')}
+              className={`flex-1 py-3.5 px-4 text-center font-bold text-base transition-all relative ${activeTab === 'notes'
+                  ? 'text-green-600 dark:text-green-400'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                }`}
+            >
+              📝 ملاحظات
+              {freeSelectedCount > 0 && (
+                <span className="mr-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-green-500 text-white text-xs font-bold">{freeSelectedCount}</span>
+              )}
+              {activeTab === 'notes' && (
+                <span className="absolute bottom-0 right-0 left-0 h-[3px] bg-green-500 dark:bg-green-400 rounded-t-full" />
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab('additions')}
+              className={`flex-1 py-3.5 px-4 text-center font-bold text-base transition-all relative ${activeTab === 'additions'
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                }`}
+            >
+              🍽️ إضافات
+              {paidSelectedCount > 0 && (
+                <span className="mr-2 inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-white text-xs font-bold">{paidSelectedCount}</span>
+              )}
+              {activeTab === 'additions' && (
+                <span className="absolute bottom-0 right-0 left-0 h-[3px] bg-amber-500 dark:bg-amber-400 rounded-t-full" />
+              )}
+            </button>
           </div>
 
-          <div className="flex gap-3 mt-6 pt-4 border-t dark:border-gray-700">
+          {/* Tab Content */}
+          <div className="overflow-y-auto flex-1 p-6 space-y-5 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
+            {activeTab === 'notes' && (
+              <>
+                {freeOptions.length > 0 && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {freeOptions.map(opt => {
+                      const isChecked = !!selectedOpts.find(o => o.id === opt.id);
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => toggleOpt(opt)}
+                          className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all transform active:scale-95 ${isChecked
+                            ? 'border-green-500 bg-green-50 dark:border-green-500 dark:bg-green-900/20 text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/30'
+                            : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
+                            }`}
+                        >
+                          <span className="font-bold text-center leading-tight mb-1">{opt.name}</span>
+                          <span className={`text-sm font-bold w-full text-center px-2 py-0.5 rounded-md ${isChecked ? 'bg-green-200/50 dark:bg-green-500/20 text-green-800 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}`}>
+                            مجاني
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <div>
+                  <p className="text-lg font-bold text-gray-700 dark:text-gray-300 mb-2">✏️ ملاحظة خاصة:</p>
+                  <textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    rows={3}
+                    placeholder="اكتب أي ملاحظات إضافية هنا... (مثال: بدون ثوم إضافي)"
+                    className="w-full p-4 border-2 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-200 dark:bg-gray-800 dark:border-gray-600 text-lg shadow-sm"
+                  />
+                </div>
+              </>
+            )}
+
+            {activeTab === 'additions' && (
+              <>
+                {paidOptions.length > 0 ? (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {paidOptions.map(opt => {
+                        const isChecked = !!selectedOpts.find(o => o.id === opt.id);
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => toggleOpt(opt)}
+                            className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all transform active:scale-95 ${isChecked
+                              ? 'border-blue-500 bg-blue-50 dark:border-amber-500 dark:bg-amber-900/20 text-blue-700 dark:text-amber-400 hover:bg-blue-100 dark:hover:bg-amber-900/30'
+                              : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
+                              }`}
+                          >
+                            <span className="font-bold text-center leading-tight mb-1">{opt.name}</span>
+                            <span className={`text-sm font-bold w-full text-center px-2 py-0.5 rounded-md ${isChecked ? 'bg-blue-200/50 dark:bg-amber-500/20 text-blue-800 dark:text-amber-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}`}>
+                              +{Number(opt.price).toFixed(2)} ج.م
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {addedModifiersTotal > 0 && (
+                      <div className="flex justify-end">
+                        <p className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg text-amber-800 dark:text-amber-400 font-bold">
+                          إجمالي الإضافات: +{addedModifiersTotal.toFixed(2)} ج.م
+                        </p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center py-8 text-gray-400 dark:text-gray-500">
+                    <p className="text-lg">لا توجد إضافات متاحة حالياً</p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="flex gap-3 px-6 py-4 border-t dark:border-gray-700">
             <button
               onClick={onClose}
               className="flex-1 px-6 py-4 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-xl font-bold hover:bg-gray-300 dark:hover:bg-gray-600 transition text-lg"
@@ -2589,6 +2686,6 @@ const POS: React.FC<POSProps> = ({ navigateToDashboard, orderToEdit, onOrderUpda
       </div>
     </div>
   );
-};
+}
 
 export default POS;

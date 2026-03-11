@@ -38,8 +38,20 @@ export const menuItems: MenuItem[] = [
 ];
 
 export const customers: Customer[] = [
-    { id: 1, phone: '01012345678', firstName: 'أحمد', lastName: 'محمود', deliveryZone: 'المعادي', street: 'شارع 9', building: '15', floor: '3', apartment: '301', addressType: 'Home', landmark: 'بجوار مترو الأنفاق', lat: 24.70, lng: 46.68 },
-    { id: 2, phone: '01287654321', firstName: 'فاطمة', lastName: 'علي', deliveryZone: 'الزمالك', street: 'شارع البرازيل', building: '10', floor: '5', apartment: '52', addressType: 'Work', landmark: 'برج القاهرة', lat: 24.73, lng: 46.66 },
+    {
+        id: 1, phone: '01012345678', firstName: 'أحمد', lastName: 'محمود',
+        locations: [{
+            locationName: 'المنزل', street: 'شارع 9', building: '15', floor: '3',
+            apartment: '301', landmark: 'بجوار مترو الأنفاق', kind: 'Home', isDefault: true
+        }]
+    },
+    {
+        id: 2, phone: '01287654321', firstName: 'فاطمة', lastName: 'علي',
+        locations: [{
+            locationName: 'العمل', street: 'شارع البرازيل', building: '10', floor: '5',
+            apartment: '52', landmark: 'برج القاهرة', kind: 'Work', isDefault: true
+        }]
+    },
 ];
 
 export const halls: Hall[] = [

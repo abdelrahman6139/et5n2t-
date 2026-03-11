@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Filter, Printer, ChefHat, Eye, X, Check, Clock, Package, Truck, XCircle } from 'lucide-react';
 import { API_BASE_URL, businessDays as businessDaysApi } from '../utils/api';
-import { buildCustomerReceiptHTML, buildKitchenReceiptHTML, openPrintWindow, writeAndPrint, openAndPrint } from '../utils/receiptPrint';
+import { openAndPrintData } from '../utils/printService';
 
 interface Order {
   id: number;
@@ -315,7 +315,7 @@ const OrdersManagementScreen: React.FC<OrdersScreenProps> = ({ onEditOrder, refr
     const typeMap: Record<string, 'DineIn' | 'Takeaway' | 'Delivery'> = {
       DineIn: 'DineIn', Takeaway: 'Takeaway', Delivery: 'Delivery',
     };
-    const html = buildKitchenReceiptHTML({
+    const kitchenData = {
       orderNumber: orderWithItems.user_facing_id || orderWithItems.order_no || orderWithItems.id,
       createdAt: orderWithItems.created_at ? new Date(orderWithItems.created_at) : new Date(),
       orderType: typeMap[orderWithItems.sales_center] ?? 'Takeaway',
@@ -335,20 +335,19 @@ const OrdersManagementScreen: React.FC<OrdersScreenProps> = ({ onEditOrder, refr
           notes: combined || undefined,
         };
       }),
-    });
-    openAndPrint(html, '', 'kitchen');
+    };
+    const printed = await openAndPrintData('kitchen', 'inv2', kitchenData);
+    if (!printed) {
+      alert('تعذر الطباعة: تأكد من تشغيل خدمة الطباعة C#');
+    }
   };
 
   // ─── Print Customer Receipt ───────────────────────────────────────────────
   const printReceipt = async (order: Order) => {
-    // ⭐ Open the print window FIRST — before any await — so the browser
-    //    treats it as a direct response to the user gesture (avoids popup block).
-    const printWin = openPrintWindow();
-
     let orderWithItems = order;
     if (!order.items || order.items.length === 0) {
       const full = await fetchOrderDetails(order.id);
-      if (!full) { printWin?.close(); alert('فشل في تحميل تفاصيل الطلب'); return; }
+      if (!full) { alert('فشل في تحميل تفاصيل الطلب'); return; }
       orderWithItems = full;
     }
     if (!orderWithItems.items || orderWithItems.items.length === 0) {
@@ -377,7 +376,7 @@ const OrdersManagementScreen: React.FC<OrdersScreenProps> = ({ onEditOrder, refr
       };
     });
 
-    const html = buildCustomerReceiptHTML({
+    const receiptData = {
       orderNumber:      orderWithItems.user_facing_id || orderWithItems.order_no || orderWithItems.id,
       createdAt:        orderWithItems.created_at ? new Date(orderWithItems.created_at) : new Date(),
       salesCenterLabel: salesLabels[orderWithItems.sales_center] || orderWithItems.sales_center,
@@ -394,8 +393,11 @@ const OrdersManagementScreen: React.FC<OrdersScreenProps> = ({ onEditOrder, refr
       customerPhone:    orderWithItems.customer_phone || undefined,
       customerAddress:  orderWithItems.customer_address || undefined,
       driverName:       orderWithItems.driver_name || undefined,
-    });
-    writeAndPrint(printWin, html);
+    };
+    const printed = await openAndPrintData('receipt', 'inv2', receiptData);
+    if (!printed) {
+      alert('تعذر الطباعة: تأكد من تشغيل خدمة الطباعة C#');
+    }
   };
 
   const handleEditOrder = async (orderId: number) => {

@@ -1,0 +1,18 @@
+{
+  "name": "yarb-print-agent",
+  "version": "1.0.0",
+  "description": "Silent thermal printer agent for Yarb POS — matches C# PrintService format exactly",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "pdf-to-printer": "^5.0.1",
+    "puppeteer": "^22.6.0",
+    "qrcode": "^1.5.3"
+  }
+}

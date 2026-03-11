@@ -1,12 +1,20 @@
 import { useLang } from '../i18n';
 
-
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SunIcon, MoonIcon } from '../components/icons';
 import { SalesCenter, Screen, Role, User } from '../types';
 import { settings as settingsApi } from '../utils/api';
 import { ALWAYS_ALLOWED, ADMIN_ONLY_SCREENS, getDefaultPermissions, loadRolePermissions } from '../utils/permissions';
 import { SCREEN_TITLES } from '../constants';
+import {
+  ensureConnected,
+  disconnect as qzDisconnect,
+  listPrinters,
+  getQzStatus,
+  onStatusChange,
+  QzStatus,
+} from '../utils/qzTray';
+import { getPrintConfig, setPrintConfig } from '../utils/printConfig';
 
 interface SettingsScreenProps {
   theme: 'light' | 'dark';
@@ -25,10 +33,53 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, toggleTheme, use
   // Dynamic Settings State
   const [taxRate, setTaxRate] = useState('14');
   const [serviceCharge, setServiceCharge] = useState('12');
-  /** Named Windows printer for customer receipts (empty = OS default) */
-  const [receiptPrinter, setReceiptPrinter] = useState('');
-  /** Named Windows printer for kitchen tickets (empty = OS default) */
-  const [kitchenPrinter, setKitchenPrinter] = useState('');
+
+  // ── Printer settings ────────────────────────────────────────────────────
+  const localCfg = getPrintConfig();
+  const [receiptPrinter, setReceiptPrinter] = useState(localCfg.receiptPrinter);
+  const [kitchenPrinter, setKitchenPrinter] = useState(localCfg.kitchenPrinter);
+  const [paperWidthMm, setPaperWidthMm]     = useState(String(localCfg.paperWidthMm || 80));
+
+  // ── QZ Tray state ────────────────────────────────────────────────────────
+  const [qzStatus, setQzStatus]       = useState<QzStatus>(getQzStatus());
+  const [printerList, setPrinterList] = useState<string[]>([]);
+  const [qzLoading, setQzLoading]     = useState(false);
+  const [qzError, setQzError]         = useState('');
+
+  // Subscribe to QZ Tray status changes
+  useEffect(() => {
+    const unsub = onStatusChange(setQzStatus);
+    return unsub;
+  }, []);
+
+  // Fetch printer list when QZ Tray connects
+  useEffect(() => {
+    if (qzStatus === 'connected') {
+      listPrinters()
+        .then(setPrinterList)
+        .catch(() => setPrinterList([]));
+    } else {
+      setPrinterList([]);
+    }
+  }, [qzStatus]);
+
+  const handleQzConnect = useCallback(async () => {
+    setQzLoading(true);
+    setQzError('');
+    try {
+      await ensureConnected();
+      const list = await listPrinters();
+      setPrinterList(list);
+    } catch (err: any) {
+      setQzError(String(err?.message ?? err));
+    } finally {
+      setQzLoading(false);
+    }
+  }, []);
+
+  const handleQzDisconnect = useCallback(async () => {
+    await qzDisconnect();
+  }, []);
 
   // Sales Center enable toggles
   const [enableDineIn, setEnableDineIn] = useState(true);
@@ -55,8 +106,18 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, toggleTheme, use
           const data = response.data.data;
           if (data.tax_rate) setTaxRate(data.tax_rate);
           if (data.service_charge) setServiceCharge(data.service_charge);
-          if (data.receipt_printer !== undefined) setReceiptPrinter(data.receipt_printer ?? '');
-          if (data.kitchen_printer !== undefined) setKitchenPrinter(data.kitchen_printer ?? '');
+          if (data.receipt_printer !== undefined) {
+            setReceiptPrinter(data.receipt_printer ?? '');
+            setPrintConfig({ receiptPrinter: data.receipt_printer ?? '' });
+          }
+          if (data.kitchen_printer !== undefined) {
+            setKitchenPrinter(data.kitchen_printer ?? '');
+            setPrintConfig({ kitchenPrinter: data.kitchen_printer ?? '' });
+          }
+          if (data.paper_width_mm !== undefined) {
+            setPaperWidthMm(String(data.paper_width_mm || 80));
+            setPrintConfig({ paperWidthMm: Number(data.paper_width_mm) || 80 });
+          }
           if (data.enable_dine_in !== undefined) setEnableDineIn(data.enable_dine_in === 'true');
           if (data.enable_takeaway !== undefined) setEnableTakeaway(data.enable_takeaway === 'true');
           if (data.enable_delivery !== undefined) setEnableDelivery(data.enable_delivery === 'true');
@@ -100,10 +161,18 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, toggleTheme, use
         service_charge: serviceCharge,
         receipt_printer: receiptPrinter,
         kitchen_printer: kitchenPrinter,
+        paper_width_mm: paperWidthMm,
         enable_dine_in: String(enableDineIn),
         enable_takeaway: String(enableTakeaway),
         enable_delivery: String(enableDelivery),
         role_permissions: JSON.stringify(permissionsToSave),
+      });
+
+      // Persist print config locally so it's available without a fetch
+      setPrintConfig({
+        receiptPrinter,
+        kitchenPrinter,
+        paperWidthMm: Number(paperWidthMm) || 80,
       });
 
       // Apply permissions immediately in this session
@@ -169,32 +238,122 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ theme, toggleTheme, use
           </div>
         </div>
 
-        {/* Printer Settings */}
+        {/* Printer Settings — QZ Tray */}
         <div className="bg-white dark:bg-gray-900 p-6 rounded-lg shadow border dark:border-amber-800/50">
-          <h2 className="text-2xl font-bold mb-4 border-b pb-2 dark:border-gray-700 dark:text-amber-500">إعدادات الطباعة</h2>
+          <h2 className="text-2xl font-bold mb-1 border-b pb-2 dark:border-gray-700 dark:text-amber-500">إعدادات الطباعة (QZ Tray)</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-            أدخل اسم الطابعة كما يظهر تماماً في إعدادات Windows. اتركه فارغاً لاستخدام الطابعة الافتراضية.
+            يجب تثبيت QZ Tray على جهاز الكاشير وتشغيله قبل الطباعة.
+            <a href="https://qz.io/download" target="_blank" rel="noreferrer" className="text-blue-500 underline mr-1">تحميل QZ Tray</a>
+            — ثم اضغط اتصال.
           </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">طابعة الفاتورة (اسم Windows)</label>
-              <input
-                type="text"
-                value={receiptPrinter}
-                onChange={(e) => setReceiptPrinter(e.target.value)}
-                placeholder="مثال: XP-58 Receipt Printer"
-                className="mt-1 block w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-800 focus:ring-amber-500 focus:border-amber-500"
-              />
+
+          {/* Connection status bar */}
+          <div className="flex items-center gap-3 mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border dark:border-gray-700">
+            <span className={`h-3 w-3 rounded-full flex-shrink-0 ${
+              qzStatus === 'connected'  ? 'bg-green-500' :
+              qzStatus === 'connecting' ? 'bg-amber-400 animate-pulse' :
+              qzStatus === 'error'      ? 'bg-red-500' :
+              'bg-gray-400'
+            }`} />
+            <span className="text-sm font-medium flex-1">
+              {qzStatus === 'connected'  ? 'متصل بـ QZ Tray ✓' :
+               qzStatus === 'connecting' ? 'جاري الاتصال...' :
+               qzStatus === 'error'      ? 'خطأ في الاتصال' :
+               'غير متصل'}
+            </span>
+            {qzStatus !== 'connected' ? (
+              <button
+                onClick={handleQzConnect}
+                disabled={qzLoading || qzStatus === 'connecting'}
+                className="px-4 py-1.5 text-sm bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-semibold transition disabled:opacity-50"
+              >
+                {qzLoading ? 'جاري...' : 'اتصال'}
+              </button>
+            ) : (
+              <button
+                onClick={handleQzDisconnect}
+                className="px-4 py-1.5 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 rounded-lg font-semibold transition"
+              >
+                قطع الاتصال
+              </button>
+            )}
+          </div>
+
+          {/* QZ Error */}
+          {qzError && (
+            <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-400 whitespace-pre-wrap">
+              {qzError}
             </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Receipt printer */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">طابعة المطبخ (اسم Windows)</label>
-              <input
-                type="text"
-                value={kitchenPrinter}
-                onChange={(e) => setKitchenPrinter(e.target.value)}
-                placeholder="مثال: XP-58 Kitchen Printer"
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                طابعة الفاتورة
+              </label>
+              {printerList.length > 0 ? (
+                <select
+                  value={receiptPrinter}
+                  onChange={(e) => setReceiptPrinter(e.target.value)}
+                  className="mt-1 block w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-800 focus:ring-amber-500 focus:border-amber-500"
+                >
+                  <option value="">-- الطابعة الافتراضية --</option>
+                  {printerList.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={receiptPrinter}
+                  onChange={(e) => setReceiptPrinter(e.target.value)}
+                  placeholder="اتصل بـ QZ Tray لاختيار الطابعة، أو أدخل الاسم يدوياً"
+                  className="mt-1 block w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-800 focus:ring-amber-500 focus:border-amber-500"
+                />
+              )}
+            </div>
+
+            {/* Kitchen printer */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                طابعة المطبخ
+              </label>
+              {printerList.length > 0 ? (
+                <select
+                  value={kitchenPrinter}
+                  onChange={(e) => setKitchenPrinter(e.target.value)}
+                  className="mt-1 block w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-800 focus:ring-amber-500 focus:border-amber-500"
+                >
+                  <option value="">-- الطابعة الافتراضية --</option>
+                  {printerList.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={kitchenPrinter}
+                  onChange={(e) => setKitchenPrinter(e.target.value)}
+                  placeholder="اتصل بـ QZ Tray لاختيار الطابعة، أو أدخل الاسم يدوياً"
+                  className="mt-1 block w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-800 focus:ring-amber-500 focus:border-amber-500"
+                />
+              )}
+            </div>
+
+            {/* Paper width */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                عرض الورق
+              </label>
+              <select
+                value={paperWidthMm}
+                onChange={(e) => setPaperWidthMm(e.target.value)}
                 className="mt-1 block w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-800 focus:ring-amber-500 focus:border-amber-500"
-              />
+              >
+                <option value="80">80 مم (الأكثر شيوعاً)</option>
+                <option value="58">58 مم</option>
+              </select>
             </div>
           </div>
         </div>

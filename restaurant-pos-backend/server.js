@@ -32,6 +32,7 @@ import userRoutes from './routes/userRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
 import activityRoutes from './routes/activityRoutes.js';
 import noteOptionsRoutes from './routes/noteOptionsRoutes.js';
+import publicRoutes from './routes/publicRoutes.js';
 
 // Add route
 
@@ -49,21 +50,35 @@ dotenv.config();
 
 const app = express();
 
+// Trust proxy when behind Nginx reverse proxy
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
+
 // Middleware - CORS configuration for multiple origins
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  // Production domains
+  'http://sahla.lamarpos.cloud',
+  'https://sahla.lamarpos.cloud',
+  'http://order.lamarpos.cloud',
+  'https://order.lamarpos.cloud',
+  'http://api.lamarpos.cloud',
+  'https://api.lamarpos.cloud',
+  'http://lamarpos.cloud',
+  'https://lamarpos.cloud',
+];
+
 app.use(cors({
   origin: function (origin, callback) {
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'http://sahla.lamarpos.cloud',
-      'https://sahla.lamarpos.cloud'
-    ];
     // Allow requests with no origin (mobile apps, curl, Postman, etc)
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       console.log('⚠️ CORS blocked origin:', origin);
-      callback(null, true); // Allow all origins for now
+      callback(new Error('Not allowed by CORS'));
     }
   },
   credentials: true
@@ -145,6 +160,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/note-options', noteOptionsRoutes);
+app.use('/api/public', publicRoutes);
 
 app.get("/", (req, res) => {
   res.json({
